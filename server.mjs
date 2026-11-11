@@ -77,7 +77,9 @@ createServer((req, res) => {
       console.log(`${new Date().toISOString()} ok ${model} ${Date.now() - t0} ms · ${system.length + user.length} caracteres`);
       send(res, 200, { text, model });
     } catch (e) {
-      console.warn(`${new Date().toISOString()} error: ${e.message}`);
+      // en el registro no va nada del contenido (en un repo público de GitHub los registros los ve cualquiera):
+      // solo el tipo de error. El detalle le llega al Worker en la respuesta. LOG_DETAIL=1 lo muestra (VM propia).
+      console.warn(`${new Date().toISOString()} error: ${process.env.LOG_DETAIL === "1" ? e.message : String(e.message).split(":")[0].slice(0, 40)}`);
       send(res, 502, { error: e.message });
     } finally { running--; }
   });
