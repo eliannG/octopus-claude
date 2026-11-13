@@ -56,6 +56,7 @@ while (Date.now() - idleSince < LINGER && fails < 5) {
   } catch (e) { fails++; console.warn("El Worker no contestó:", e.message); }
   await sleep(4000);
 }
+if (fails >= 5) { console.error("El Worker no contestó en " + WORKER.replace(/^https:\/\//, "").split(".")[0] + ": revisá la dirección (secreto WORKER_URL) y el API_TOKEN."); stop(); process.exit(1); }
 await call("/gh/bye").catch(() => undefined);
 console.log(`Listo: ${done} mensaje(s). Me apago.`);
 stop();
