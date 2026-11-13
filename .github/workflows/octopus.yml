@@ -27,7 +27,8 @@ jobs:
           chmod +x cloudflared
       - name: Atender
         env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
+          # la dirección la manda el propio Worker al despertar la corrida; el secreto queda de respaldo (Run workflow a mano)
+          WORKER_URL: ${{ github.event.client_payload.worker || secrets.WORKER_URL }}
           OCTOPUS_API_TOKEN: ${{ secrets.OCTOPUS_API_TOKEN }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           LINGER_SECONDS: 150
