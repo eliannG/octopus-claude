@@ -60,7 +60,7 @@ function ask(system, user, model, images) {
           ? out.trim().split("\n").reverse().map((l) => { try { return JSON.parse(l); } catch { return null; } }).find((x) => x && x.type === "result")
           : JSON.parse(out.trim());
         if (!j) throw new Error("sin resultado");
-        if (j.is_error) return done(reject, new Error(/Not logged in|\/login|invalid.*token/i.test(String(j.result)) ? "Claude Code no tiene la sesión: revisá CLAUDE_CODE_OAUTH_TOKEN" : String(j.result || "error de Claude").slice(0, 300)));
+        if (j.is_error) return done(reject, new Error(/Not logged in|\/login|invalid.*token|token.*invalid|Failed to authenticate|API Error: 401/i.test(String(j.result)) ? "Claude Code no tiene la sesión: revisá CLAUDE_CODE_OAUTH_TOKEN" : String(j.result || "error de Claude").slice(0, 300)));
         done(resolve, String(j.result || ""));
       } catch { done(reject, new Error("Respuesta rara de Claude Code: " + (err || out).slice(0, 300))); }
     });
@@ -96,7 +96,7 @@ createServer((req, res) => {
       send(res, 200, { text, model });
     } catch (e) {
       console.warn(`${new Date().toISOString()} error: ${String(e.message).split(":")[0].slice(0, 60)}`);
-      send(res, 502, { error: e.message });
+      send(res, 422, { error: e.message });   // 422 y no 502: el túnel de Cloudflare reemplaza los 502 y se perdía el motivo
     } finally { running--; }
   });
 }).listen(PORT, HOST, () => console.log(`Octopus · Claude escuchando en ${HOST}:${PORT}`));

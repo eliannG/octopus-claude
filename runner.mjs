@@ -23,28 +23,38 @@ process.on("exit", stop);
 const server = spawn("node", ["server.mjs"], { env: { ...process.env, OCTOPUS_VM_TOKEN: token, PORT: String(PORT), HOST: "127.0.0.1" }, stdio: "inherit" });
 kids.push(server);
 
-// 2. túnel
-const tunnel = spawn("./cloudflared", ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${PORT}`], { stdio: ["ignore", "pipe", "pipe"] });
-kids.push(tunnel);
-const url = await new Promise((resolve, reject) => {
-  const t = setTimeout(() => reject(new Error("el túnel no dio una dirección en 60 s")), 60_000);
-  const look = (d) => { const m = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/.exec(String(d)); if (m) { clearTimeout(t); resolve(m[0]); } };
-  tunnel.stdout.on("data", look); tunnel.stderr.on("data", look);
-  tunnel.on("exit", (c) => reject(new Error("cloudflared terminó (" + c + ")")));
-});
-// la dirección tarda unos segundos en existir para el resto del mundo
-let up = false;
-for (let i = 0; i < 30 && !up; i++) {
-  try { const r = await fetch(url + "/", { signal: AbortSignal.timeout(5000) }); up = r.ok; } catch { /* todavía no */ }
-  if (!up) await sleep(2000);
+// si algo sale mal, se le avisa al Worker por qué (se ve en /health → github_error) y se termina
+const fail = async (why) => {
+  console.error(why);
+  try { await fetch(WORKER + "/gh/bye", { method: "POST", headers: { authorization: "Bearer " + API, "content-type": "application/json" }, body: JSON.stringify({ error: why }), signal: AbortSignal.timeout(8000) }); } catch { /* sin Worker */ }
+  stop(); process.exit(1);
+};
+
+// 2. túnel (hasta 3 intentos: los túneles rápidos a veces no dan dirección o tardan en existir)
+let url = "", up = false;
+for (let intento = 1; intento <= 3 && !up; intento++) {
+  const tunnel = spawn("./cloudflared", ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${PORT}`], { stdio: ["ignore", "pipe", "pipe"] });
+  kids.push(tunnel);
+  url = await new Promise((resolve) => {
+    const t = setTimeout(() => resolve(""), 60_000);
+    const look = (d) => { const m = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/.exec(String(d)); if (m) { clearTimeout(t); resolve(m[0]); } };
+    tunnel.stdout.on("data", look); tunnel.stderr.on("data", look);
+    tunnel.on("exit", () => { clearTimeout(t); resolve(""); });
+  });
+  // la dirección tarda unos segundos en existir para el resto del mundo
+  for (let i = 0; url && i < 30 && !up; i++) {
+    try { const r = await fetch(url + "/", { signal: AbortSignal.timeout(5000) }); up = r.ok; } catch { /* todavía no */ }
+    if (!up) await sleep(2000);
+  }
+  if (!up) { console.warn(`Túnel: intento ${intento} sin éxito${url ? " (no respondió)" : " (no dio dirección)"}.`); try { tunnel.kill("SIGTERM"); } catch { /* */ } }
 }
-if (!up) { console.error("El túnel no respondió."); stop(); process.exit(1); }
-console.log("Túnel listo.");
+if (!up) await fail("El túnel de Cloudflare no anduvo en 3 intentos.");
+console.log("Túnel listo: " + url);
 
 // 3 y 4. trabajar y quedarse un rato
 const call = async (path) => {
   const r = await fetch(WORKER + path, { method: "POST", headers: { authorization: "Bearer " + API, "content-type": "application/json" }, body: JSON.stringify({ url, token }) });
-  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  if (!r.ok) throw new Error(`${path} → ${r.status}${r.status === 401 ? " (el secreto OCTOPUS_API_TOKEN no es el API_TOKEN del Worker)" : ""}`);
   return r.json();
 };
 let idleSince = Date.now(), fails = 0, done = 0;
@@ -56,7 +66,7 @@ while (Date.now() - idleSince < LINGER && fails < 5) {
   } catch (e) { fails++; console.warn("El Worker no contestó:", e.message); }
   await sleep(4000);
 }
-if (fails >= 5) { console.error("El Worker no contestó en " + WORKER.replace(/^https:\/\//, "").split(".")[0] + ": revisá la dirección (secreto WORKER_URL) y el API_TOKEN."); stop(); process.exit(1); }
+if (fails >= 5) await fail("El Worker no contestó en " + WORKER.replace(/^https:\/\//, "").split(".")[0] + ": revisá la dirección (secreto WORKER_URL) y el API_TOKEN.");
 await call("/gh/bye").catch(() => undefined);
 console.log(`Listo: ${done} mensaje(s). Me apago.`);
 stop();
