@@ -24,7 +24,15 @@ const MAX_PARALLEL = +(process.env.MAX_PARALLEL || 2);
 const MODELS = new Set(["haiku", "sonnet", "opus"]);
 const MEDIA = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 if (TOKEN.length < 24) { console.error("Falta OCTOPUS_VM_TOKEN (mínimo 24 caracteres)."); process.exit(1); }
-if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) console.warn("Ojo: falta CLAUDE_CODE_OAUTH_TOKEN (sin eso Claude Code no tiene tu sesión).");
+// el token de `claude setup-token` sale cortado en varios renglones en la terminal: al copiarlo suelen venir saltos de
+// línea o espacios en el medio, y así Claude Code no lo acepta. Se limpian acá.
+if (process.env.CLAUDE_CODE_OAUTH_TOKEN) process.env.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN.replace(/\s+/g, "");
+{
+  const t = process.env.CLAUDE_CODE_OAUTH_TOKEN || "";
+  // sin mostrarlo: solo si tiene la forma de un token de setup-token (empieza con sk-ant-oat y es largo)
+  if (!t) console.warn("Ojo: falta el secreto CLAUDE_CODE_OAUTH_TOKEN (sin eso Claude Code no tiene tu sesión).");
+  else console.log(`Token de Claude: ${t.length} caracteres, ${/^sk-ant-oat\d*-/.test(t) ? (t.length < 90 ? "empieza bien (sk-ant-oat…) pero es CORTO: parece que se cortó al copiarlo" : "con la forma correcta (sk-ant-oat…)") : "NO empieza con sk-ant-oat: no parece el de «claude setup-token»"}.`);
+}
 
 // carpeta neutra: que Claude Code no lea instrucciones de ningún proyecto
 const cwd = join(tmpdir(), "octopus-claude");
@@ -60,7 +68,8 @@ function ask(system, user, model, images) {
           ? out.trim().split("\n").reverse().map((l) => { try { return JSON.parse(l); } catch { return null; } }).find((x) => x && x.type === "result")
           : JSON.parse(out.trim());
         if (!j) throw new Error("sin resultado");
-        if (j.is_error) return done(reject, new Error(/Not logged in|\/login|invalid.*token|token.*invalid|Failed to authenticate|API Error: 401/i.test(String(j.result)) ? "Claude Code no tiene la sesión: revisá CLAUDE_CODE_OAUTH_TOKEN" : String(j.result || "error de Claude").slice(0, 300)));
+        // con el motivo de Claude al final (antes se escondía y no se sabía si era el token vencido, mal copiado o el plan)
+        if (j.is_error) return done(reject, new Error(/Not logged in|\/login|invalid.*token|token.*invalid|Failed to authenticate|API Error: 401/i.test(String(j.result)) ? "Claude Code no tiene la sesión: revisá CLAUDE_CODE_OAUTH_TOKEN (Claude dijo: " + String(j.result).slice(0, 160) + ")" : String(j.result || "error de Claude").slice(0, 300)));
         done(resolve, String(j.result || ""));
       } catch { done(reject, new Error("Respuesta rara de Claude Code: " + (err || out).slice(0, 300))); }
     });
@@ -95,7 +104,7 @@ createServer((req, res) => {
       console.log(`${new Date().toISOString()} ok ${model} ${Date.now() - t0} ms · ${system.length + user.length} caracteres · ${images.length} imágenes`);
       send(res, 200, { text, model });
     } catch (e) {
-      console.warn(`${new Date().toISOString()} error: ${String(e.message).split(":")[0].slice(0, 60)}`);
+      console.warn(`${new Date().toISOString()} error: ${String(e.message).slice(0, 300)}`);
       send(res, 422, { error: e.message });   // 422 y no 502: el túnel de Cloudflare reemplaza los 502 y se perdía el motivo
     } finally { running--; }
   });
